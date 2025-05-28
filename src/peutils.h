@@ -2,6 +2,7 @@
 #define PEUTILS
 
 #include <stdio.h>
+#include <stdbool.h> 
 #include <windows.h>
 
 typedef enum {
@@ -9,6 +10,8 @@ typedef enum {
     PE_ERROR_GENERAL_ERROR,
     PE_ERROR_INVALID_PE,
     PE_ERROR_UNSUPPORTED_IMAGE,
+    PE_ERROR_FAILED_TO_ALLOCATE_MEMORY,
+    PE_ERROR_FAILED_TO_SET_PERMISSIONS
 
 } PE_ERROR;
 
@@ -30,6 +33,7 @@ extern "C" {
 
 
 PE_ERROR parse_pe(const unsigned char* pe, const size_t size, PPE parsed_pe);
+PE_ERROR map_pe(const PPE pe, unsigned char* file, const size_t file_size, unsigned char** image_base);
 
 #ifdef __cplusplus
 }
