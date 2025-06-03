@@ -31,6 +31,12 @@ int main(int argc, char * argv[]) {
         goto cleanup;
     }
 
+    err = fix_iat(pe, file, file_size, &image_base);
+    if (err) {
+        fprintf(stderr, "Failed to fix IAT: %d\n", err);
+        goto cleanup;
+    }    
+
     entry_point = image_base + pe->nt_header->OptionalHeader.AddressOfEntryPoint;
    
    

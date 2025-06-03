@@ -142,5 +142,48 @@ PE_ERROR map_pe(const PPE pe, unsigned char* file, const size_t file_size, unsig
     return PE_ERROR_NO_ERROR;
 }
 
+PE_ERROR fix_iat(const PPE pe, unsigned char* file, const size_t file_size, unsigned char** image_base) {
+    DWORD offset_import_dir =  pe->nt_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+    if (!offset_import_dir)
+        return PE_ERROR_INVALID_PE;
+    
+    PIMAGE_IMPORT_DESCRIPTOR import_dir = (PIMAGE_IMPORT_DESCRIPTOR)(*image_base + offset_import_dir);
+
+
+    while (import_dir->Name) {
+        const char* name = (const char* )(*image_base+import_dir->Name);
+
+        HMODULE han_lib = LoadLibrary(name);
+        if (!han_lib)
+            return PE_ERROR_FAILED_TO_LOAD_LIBRARY;
+        
+
+        //resolving fn addresses
+        DWORD offset_thunk_data = import_dir->OriginalFirstThunk;
+        if (!offset_thunk_data)
+            return PE_ERROR_INVALID_PE;
+
+        PIMAGE_THUNK_DATA64 thunk = (PIMAGE_THUNK_DATA64) (*image_base + offset_thunk_data); 
+
+        while (thunk->u1.AddressOfData) {
+
+            PIMAGE_IMPORT_BY_NAME import_by_name = (PIMAGE_IMPORT_BY_NAME)(*image_base + thunk->u1.AddressOfData);
+            const char* function_name = import_by_name->Name;
+            
+            FARPROC fn_add = GetProcAddress(han_lib, (LPCSTR)function_name);
+            if (!fn_add)
+                return PE_ERROR_FAILED_TO_GET_PROC_ADDRESS;
+
+            ULONGLONG relative_address = ULONGLONG((unsigned char* )fn_add - *image_base);
+            thunk->u1.Function = relative_address;
+
+            thunk++;
+        }
+
+        import_dir ++;
+    }
+
+    return PE_ERROR_NO_ERROR;
+}
 
 // to free - section_headers image_base
