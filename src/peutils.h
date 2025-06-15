@@ -36,7 +36,8 @@ extern "C" {
 
 PE_ERROR parse_pe(const unsigned char* pe, const size_t size, PPE parsed_pe);
 PE_ERROR map_pe(const PPE pe, unsigned char* file, const size_t file_size, unsigned char** image_base);
-PE_ERROR fix_iat(const PPE pe, unsigned char* file, const size_t file_size, unsigned char** image_base);
+PE_ERROR fix_iat(const PPE pe, unsigned char** image_base);
+PE_ERROR fix_relocation_table(const PPE pe, unsigned char** image_base);
 
 #ifdef __cplusplus
 }

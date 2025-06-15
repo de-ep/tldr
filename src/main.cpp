@@ -31,14 +31,22 @@ int main(int argc, char * argv[]) {
         goto cleanup;
     }
 
-    err = fix_iat(pe, file, file_size, &image_base);
+    err = fix_iat(pe, &image_base);
     if (err) {
         fprintf(stderr, "Failed to fix IAT: %d\n", err);
         goto cleanup;
     }    
 
+    err = fix_relocation_table(pe, &image_base);
+    if (err) {
+        fprintf(stderr, "Failed to fix Relocation Table: %d\n", err);
+        goto cleanup;
+    }  
+
+
+puts("all okay calling _start\n");
     entry_point = image_base + pe->nt_header->OptionalHeader.AddressOfEntryPoint;
-   
+    (*((void(*)())entry_point))();
    
    
    printf("success\n");

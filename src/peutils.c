@@ -142,9 +142,11 @@ PE_ERROR map_pe(const PPE pe, unsigned char* file, const size_t file_size, unsig
     return PE_ERROR_NO_ERROR;
 }
 
-PE_ERROR fix_iat(const PPE pe, unsigned char* file, const size_t file_size, unsigned char** image_base) {
+PE_ERROR fix_iat(const PPE pe, unsigned char** image_base) {
+    const DWORD image_size =  pe->nt_header->OptionalHeader.SizeOfImage; 
+
     DWORD offset_import_dir =  pe->nt_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
-    if (!offset_import_dir)
+    if (!offset_import_dir || offset_import_dir > image_size+sizeof(IMAGE_IMPORT_DESCRIPTOR))
         return PE_ERROR_INVALID_PE;
     
     PIMAGE_IMPORT_DESCRIPTOR import_dir = (PIMAGE_IMPORT_DESCRIPTOR)(*image_base + offset_import_dir);
@@ -160,12 +162,15 @@ PE_ERROR fix_iat(const PPE pe, unsigned char* file, const size_t file_size, unsi
 
         //resolving fn addresses
         DWORD offset_thunk_data = import_dir->OriginalFirstThunk;
-        if (!offset_thunk_data)
+        if (!offset_thunk_data || offset_thunk_data > image_size+sizeof(IMAGE_THUNK_DATA64))
             return PE_ERROR_INVALID_PE;
 
         PIMAGE_THUNK_DATA64 thunk = (PIMAGE_THUNK_DATA64) (*image_base + offset_thunk_data); 
 
         while (thunk->u1.AddressOfData) {
+            
+            if (thunk->u1.AddressOfData > image_size+sizeof(IMAGE_IMPORT_BY_NAME))
+                return PE_ERROR_INVALID_PE;
 
             PIMAGE_IMPORT_BY_NAME import_by_name = (PIMAGE_IMPORT_BY_NAME)(*image_base + thunk->u1.AddressOfData);
             const char* function_name = import_by_name->Name;
@@ -174,8 +179,7 @@ PE_ERROR fix_iat(const PPE pe, unsigned char* file, const size_t file_size, unsi
             if (!fn_add)
                 return PE_ERROR_FAILED_TO_GET_PROC_ADDRESS;
 
-            ULONGLONG relative_address = ULONGLONG((unsigned char* )fn_add - *image_base);
-            thunk->u1.Function = relative_address;
+            thunk->u1.Function = (ULONGLONG)fn_add;
 
             thunk++;
         }
@@ -185,5 +189,75 @@ PE_ERROR fix_iat(const PPE pe, unsigned char* file, const size_t file_size, unsi
 
     return PE_ERROR_NO_ERROR;
 }
+
+PE_ERROR fix_relocation_table(const PPE pe, unsigned char** image_base) {
+    const DWORD image_size = pe->nt_header->OptionalHeader.SizeOfImage;
+
+    ULONGLONG delta = (ULONGLONG)*image_base - pe->nt_header->OptionalHeader.ImageBase;
+    if (!delta) 
+        return PE_ERROR_NO_ERROR;
+
+    DWORD offset_base_relocation = pe->nt_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
+
+    for (;;) {
+
+        if (!offset_base_relocation || offset_base_relocation > image_size + sizeof(IMAGE_BASE_RELOCATION))
+            return PE_ERROR_INVALID_PE;
+
+        PIMAGE_BASE_RELOCATION base_reloc = (PIMAGE_BASE_RELOCATION)(*image_base + offset_base_relocation);
+        if (!base_reloc->SizeOfBlock) 
+            break;
+
+        DWORD cur_size = sizeof(IMAGE_BASE_RELOCATION);
+        PWORD word = (PWORD)(*image_base + offset_base_relocation + sizeof(IMAGE_BASE_RELOCATION));
+
+        while (base_reloc->SizeOfBlock > cur_size) {
+            WORD type = *word >> 12;     // fetch high 4 bits
+            WORD offset = *word & 4095;  // fetch low 12 bits
+
+            PULONGLONG fix_this_ptr =
+                PULONGLONG(*image_base + base_reloc->VirtualAddress + offset);
+
+            switch (type) {
+                case IMAGE_REL_BASED_DIR64: {
+                    DWORD lpflOldProtect, lpflOldProtect1;
+                    
+                    bool ret = VirtualProtect(
+                        (LPVOID)fix_this_ptr, 
+                        sizeof(ULONGLONG),
+                        PAGE_READWRITE, 
+                        &lpflOldProtect
+                    );
+                    if (!ret) 
+                        return PE_ERROR_FAILED_TO_SET_PERMISSIONS;
+
+                    *fix_this_ptr += delta;
+
+                    ret = VirtualProtect(
+                        (LPVOID)fix_this_ptr, 
+                        sizeof(ULONGLONG),
+                        lpflOldProtect, 
+                        &lpflOldProtect1
+                    );
+                    if (!ret) 
+                        return PE_ERROR_FAILED_TO_SET_PERMISSIONS;
+
+                    
+                    break;
+                }
+
+                default:
+                    break;
+            }
+
+            cur_size += sizeof(WORD);
+            word++;
+        }
+        offset_base_relocation += base_reloc->SizeOfBlock;
+    }
+
+    return PE_ERROR_NO_ERROR;
+}
+
 
 // to free - section_headers image_base
