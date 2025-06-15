@@ -72,7 +72,7 @@ PE_ERROR map_pe(const PPE pe, unsigned char* file, const size_t file_size, unsig
     *image_base = (unsigned char * ) VirtualAlloc(NULL, size_of_image, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!*image_base)
         return PE_ERROR_FAILED_TO_ALLOCATE_MEMORY;
-
+printf("Allocated: %d for loading the pe\n", size_of_image);
 
     //mapping header to memory
     size_of_headers = pe->nt_header->OptionalHeader.SizeOfHeaders;
@@ -90,11 +90,11 @@ PE_ERROR map_pe(const PPE pe, unsigned char* file, const size_t file_size, unsig
 
         if (pe->section_headers[i]->VirtualAddress > size_of_image)
             return PE_ERROR_INVALID_PE;
-        unsigned char * dest = *image_base + pe->section_headers[i]->VirtualAddress;
+        unsigned char* dest = *image_base + pe->section_headers[i]->VirtualAddress;
 
         if (pe->section_headers[i]->PointerToRawData > file_size)
             return PE_ERROR_INVALID_PE;
-        unsigned char * src = file + pe->section_headers[i]->PointerToRawData;
+        unsigned char* src = file + pe->section_headers[i]->PointerToRawData;
 
         DWORD size = pe->section_headers[i]->SizeOfRawData;
         if (pe->section_headers[i]->VirtualAddress + size > size_of_image)
@@ -134,10 +134,9 @@ PE_ERROR map_pe(const PPE pe, unsigned char* file, const size_t file_size, unsig
             protection = PAGE_READONLY;
 
         
-        if (!VirtualProtect(dest, pe->section_headers[i]->SizeOfRawData, protection, &op) ) {
-            printf("vp failed: %lu\n", GetLastError());
+        if (!VirtualProtect(dest, pe->section_headers[i]->SizeOfRawData, protection, &op) )
             return PE_ERROR_FAILED_TO_SET_PERMISSIONS;
-        }
+        
     }
     return PE_ERROR_NO_ERROR;
 }
@@ -154,7 +153,7 @@ PE_ERROR fix_iat(const PPE pe, unsigned char** image_base) {
 
     while (import_dir->Name) {
         const char* name = (const char* )(*image_base+import_dir->Name);
-
+printf("%s\n", name);
         HMODULE han_lib = LoadLibrary(name);
         if (!han_lib)
             return PE_ERROR_FAILED_TO_LOAD_LIBRARY;
@@ -164,24 +163,30 @@ PE_ERROR fix_iat(const PPE pe, unsigned char** image_base) {
         DWORD offset_thunk_data = import_dir->OriginalFirstThunk;
         if (!offset_thunk_data || offset_thunk_data > image_size+sizeof(IMAGE_THUNK_DATA64))
             return PE_ERROR_INVALID_PE;
+        PIMAGE_THUNK_DATA64 orig_thunk = (PIMAGE_THUNK_DATA64) (*image_base + offset_thunk_data); 
 
-        PIMAGE_THUNK_DATA64 thunk = (PIMAGE_THUNK_DATA64) (*image_base + offset_thunk_data); 
+        offset_thunk_data = import_dir->FirstThunk;
+        if (!offset_thunk_data || offset_thunk_data > image_size+sizeof(IMAGE_THUNK_DATA64))
+            return PE_ERROR_INVALID_PE;
+        PIMAGE_THUNK_DATA64 first_thunk = (PIMAGE_THUNK_DATA64) (*image_base + offset_thunk_data); 
 
-        while (thunk->u1.AddressOfData) {
+
+        while (orig_thunk->u1.AddressOfData) {
             
-            if (thunk->u1.AddressOfData > image_size+sizeof(IMAGE_IMPORT_BY_NAME))
+            if (orig_thunk->u1.AddressOfData > image_size+sizeof(IMAGE_IMPORT_BY_NAME))
                 return PE_ERROR_INVALID_PE;
 
-            PIMAGE_IMPORT_BY_NAME import_by_name = (PIMAGE_IMPORT_BY_NAME)(*image_base + thunk->u1.AddressOfData);
+            PIMAGE_IMPORT_BY_NAME import_by_name = (PIMAGE_IMPORT_BY_NAME)(*image_base + orig_thunk->u1.AddressOfData);
             const char* function_name = import_by_name->Name;
-            
+printf("\t\t%s\n", function_name);            
             FARPROC fn_add = GetProcAddress(han_lib, (LPCSTR)function_name);
             if (!fn_add)
                 return PE_ERROR_FAILED_TO_GET_PROC_ADDRESS;
 
-            thunk->u1.Function = (ULONGLONG)fn_add;
+            first_thunk->u1.Function = (ULONGLONG)fn_add;
 
-            thunk++;
+            first_thunk++;
+            orig_thunk++;
         }
 
         import_dir ++;
